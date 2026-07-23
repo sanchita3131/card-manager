@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Card Manager — Workflow</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      line-height: 1.6;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      color: #94a3b8;
+      font-size: 1.1rem;
+      margin-bottom: 2.5rem;
+    }
+
+    /* ── Pipeline ── */
+    .pipeline {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 3rem;
+      background: #1e293b;
+      border-radius: 16px;
+      padding: 1.5rem 1rem;
+      border: 1px solid #334155;
+    }
+
+    .pipe-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 0.5rem;
+      min-width: 100px;
+    }
+
+    .pipe-step .icon {
+      font-size: 2rem;
+      margin-bottom: 4px;
+    }
+    .pipe-step .label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #94a3b8;
+    }
+    .pipe-arrow {
+      font-size: 1.4rem;
+      color: #475569;
+    }
+
+    /* ── Step Cards ── */
+    .step {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 16px;
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+      transition: border-color 0.15s;
+    }
+    .step:hover { border-color: #60a5fa; }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 0.75rem;
+    }
+    .step-number {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      color: #fff;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+    .step-title {
+      font-size: 1.2rem;
+      font-weight: 700;
+    }
+    .step-tag {
+      font-size: 0.65rem;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-left: auto;
+    }
+    .tag-ocr       { background: #05966922; color: #34d399; border: 1px solid #05966955; }
+    .tag-llm       { background: #7c3aed22; color: #a78bfa; border: 1px solid #7c3aed55; }
+    .tag-regex     { background: #d9770622; color: #fbbf24; border: 1px solid #d9770655; }
+    .tag-scoring   { background: #dc262622; color: #f87171; border: 1px solid #dc262655; }
+    .tag-storage   { background: #0284c722; color: #38bdf8; border: 1px solid #0284c755; }
+
+    .step p, .step ul {
+      color: #cbd5e1;
+      font-size: 0.95rem;
+    }
+    .step ul {
+      list-style: none;
+      padding: 0;
+    }
+    .step li {
+      padding: 4px 0 4px 20px;
+      position: relative;
+    }
+    .step li::before {
+      content: "›";
+      position: absolute;
+      left: 4px;
+      color: #60a5fa;
+      font-weight: 700;
+    }
+
+    /* ── Sub-panels ── */
+    .sub-panel {
+      background: #0f172a;
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      margin-top: 0.75rem;
+      border: 1px solid #1e293b;
+    }
+    .sub-panel-title {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: #60a5fa;
+      margin-bottom: 6px;
+    }
+    .sub-panel code {
+      display: block;
+      background: #0a0f1e;
+      padding: 0.6rem 0.9rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      color: #e2e8f0;
+      border: 1px solid #1e293b;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .side-by-side {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 0.75rem;
+    }
+    @media (max-width: 640px) {
+      .side-by-side { grid-template-columns: 1fr; }
+    }
+
+    /* ── Data-flow callout ── */
+    .callout {
+      background: #1e293b;
+      border-left: 4px solid #60a5fa;
+      border-radius: 0 10px 10px 0;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    .callout-title { font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: #60a5fa; margin-bottom: 4px; }
+    .callout p { color: #94a3b8; font-size: 0.9rem; margin: 0; }
+
+    .arch {
+      background: #f8fafc;
+      color: #0f172a;
+      border-radius: 14px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    hr { border: none; border-top: 1px solid #334155; margin: 2rem 0; }
+
+    .file-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 0.5rem;
+    }
+    .file-pill {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.8rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: #94a3b8;
+    }
+    .file-pill strong { color: #60a5fa; }
+
+    .glow { text-shadow: 0 0 20px rgba(96,165,250,0.15); }
+
+    footer {
+      text-align: center;
+      color: #475569;
+      font-size: 0.85rem;
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid #1e293b;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ─── Header ─── -->
+  <h1 class="glow">Card Manager</h1>
+  <p class="subtitle">How a business card photo becomes a Google Sheets row — step by step</p>
+
+  <!-- ─── Pipeline visual ─── -->
+  <div class="pipeline">
+    <div class="pipe-step"><span class="icon">📸</span><span class="label">Card Photo</span></div>
+    <span class="pipe-arrow">→</span>
+    <div class="pipe-step"><span class="icon">🔍</span><span class="label">PaddleOCR</span></div>
+    <span class="pipe-arrow">→</span>
+    <div class="pipe-step"><span class="icon">🧠</span><span class="label">Hybrid Extract</span></div>
+    <span class="pipe-arrow">→</span>
+    <div class="pipe-step"><span class="icon">📊</span><span class="label">Google Sheets</span></div>
+  </div>
+
+  <div class="arch">┌─────────────────────────────────────────────────────────────────┐
+│  Card Image  ──→  PaddleOCR  ──→  LLM (name/pos/co)  ──→  Google Sheets  │
+│                      v5             + regex (phone/email)     API         │
+│                  ONNX Runtime        + scoring fallback                  │
+│                  100% local         OpenRouter                           │
+└─────────────────────────────────────────────────────────────────┘</div>
+
+  <!-- ─── Step 1 ─── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">1</div>
+      <div class="step-title">Image — no preprocessing</div>
+      <span class="step-tag tag-ocr">OpenCV</span>
+    </div>
+    <p>The image is passed through unchanged. Earlier versions tried to sharpen, threshold, and deskew — but PaddleOCR is trained on <em>natural photos</em> (phone cameras, scanners), so preprocessing only made text harder to read.</p>
+    <div class="sub-panel">
+      <div class="sub-panel-title">image_processor.py</div>
+      <code>def prepare(image_path: str) -> str:
+    # Returns the path unchanged. PaddleOCR handles its own preprocessing.
+    return image_path</code>
+    </div>
+  </div>
+
+  <!-- ─── Step 2 ─── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">2</div>
+      <div class="step-title">OCR — PaddleOCR v5 + ONNX Runtime</div>
+      <span class="step-tag tag-ocr">FREE</span>
+    </div>
+    <p>PaddleOCR detects text regions and reads each line. It uses two ONNX models that auto-download on first run (~30 MB total):</p>
+    <ul>
+      <li><strong>PP-OCRv5_server_det_onnx</strong> — finds where text is on the image</li>
+      <li><strong>en_PP-OCRv5_mobile_rec_onnx</strong> — reads the actual characters</li>
+    </ul>
+    <p>The <code>engine='onnxruntime'</code> flag eliminates the need for PaddlePaddle (the 2GB deep learning framework). ONNX Runtime is lightweight and CPU-only.</p>
+    <div class="sub-panel">
+      <div class="sub-panel-title">Output — list of (text, confidence, bounding_box)</div>
+      <code>[
+  ("Acme Technologies Inc.",   1.00, [[10,10], [200,10], [200,35], [10,35]]),
+  ("Sanchita Pathak",          1.00, [[10,50], [150,50], [150,75], [10,75]]),
+  ("Senior Software Engineer", 1.00, [[10,90], [220,90], [220,115],[10,115]]),
+  ("+1 (555) 123-4567",        1.00, [[10,130],[180,130],[180,155],[10,155]]),
+  ("sanchita@acme.com",        0.98, [[10,170],[210,170],[210,195],[10,195]]),
+]</code>
+    </div>
+  </div>
+
+  <!-- ─── Step 3 — Hybrid Extraction ─── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">3</div>
+      <div class="step-title">Hybrid Extraction</div>
+      <span class="step-tag tag-llm">OpenRouter</span>
+    </div>
+    <p>This is the clever part. Three systems work together to turn raw text into structured fields:</p>
+
+    <div class="side-by-side">
+      <div class="sub-panel" style="border-color: #7c3aed55;">
+        <div class="sub-panel-title" style="color: #a78bfa;">🧠 LLM — Name / Position / Company</div>
+        <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:6px;">
+        OCR lines (with y-position hints) are sent as a prompt to OpenRouter. The LLM reads contextually — it knows "CTO" is a title, "Acme Inc." is a company, and "Jane Smith" is a name — regardless of where on the card they appear.
+        </p>
+        <code style="font-size:0.75rem;">{
+  "name": "Sanchita Pathak",
+  "position": "Senior Software Engineer",
+  "company": "Acme Technologies Inc."
+}</code>
+      </div>
+
+      <div class="sub-panel" style="border-color: #d9770655;">
+        <div class="sub-panel-title" style="color: #fbbf24;">🔎 Regex — Phone / Email</div>
+        <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:6px;">
+        Near-perfect for these formats. The patterns handle country codes, extensions, dots, dashes, and common email domains. No LLM needed — regex is cheaper and more precise for structured patterns.
+        </p>
+        <code style="font-size:0.75rem;">EMAIL_RE  = /[\w.+\-]+@[\w\-]+\.[\w.\-]+/
+PHONE_RE  = /(?:\+?\d{1,3}...)?\(?\d{2,4}\)?...\d{2,9}/</code>
+      </div>
+    </div>
+
+    <div class="sub-panel" style="margin-top:0.75rem; border-color: #dc262655;">
+      <div class="sub-panel-title" style="color: #f87171;">⚠️ Scoring Fallback (when LLM is unavailable)</div>
+      <p style="font-size:0.85rem; color:#94a3b8;">If OpenRouter is down or no API key is set, the scoring system kicks in. Every text line is scored for <em>every</em> field type using:</p>
+      <ul>
+        <li><strong>150+ job keywords</strong> — CEO, Director, Engineer, etc.</li>
+        <li><strong>40+ company suffixes</strong> — Inc, LLC, Corp, GmbH, Technologies</li>
+        <li><strong>Capitalization analysis</strong> — ALL-CAPS likely = company</li>
+        <li><strong>Position on card</strong> — top = company, middle = name/title</li>
+        <li><strong>Font size</strong> — bigger text = company name</li>
+        <li><strong>Anti-patterns</strong> — "Division", "Group", "Solutions" penalized as names</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ─── Data Flow Detail ─── -->
+  <div class="callout">
+    <div class="callout-title">🗺️ Extraction Flow (in code)</div>
+    <p>
+      <strong>Round 0</strong> — LLM gets all OCR lines, returns name/position/company<br>
+      <strong>Round 1</strong> — Regex sweeps ALL lines for email + phone (always runs)<br>
+      <strong>Rounds 2–5</strong> — Scoring fills whatever fields are still null (fallback)
+    </p>
+  </div>
+
+  <!-- ─── Step 4 ─── -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-number">4</div>
+      <div class="step-title">Write to Google Sheets</div>
+      <span class="step-tag tag-storage">gspread</span>
+    </div>
+    <p>A service account (server-to-server auth, no OAuth popup) appends a row:</p>
+    <div class="arch" style="background:#f8fafc;">
+| Company              | Card Holder    | Position                  | Contact        | Email              | Timestamp           |
+|----------------------|----------------|---------------------------|----------------|--------------------|---------------------|
+| Acme Technologies Inc.| Sanchita Pathak| Senior Software Engineer | +1 (555) 123...| sanchita@acme.com  | 2026-07-23 18:25... |</div>
+    <p><code>value_input_option="RAW"</code> prevents phone numbers like <code>+1...</code> from being interpreted as spreadsheet formulas.</p>
+    <div class="file-list">
+      <span class="file-pill"><strong>config.py</strong> Sheet ID + credentials path</span>
+      <span class="file-pill"><strong>credentials.json</strong> Service account key</span>
+      <span class="file-pill"><strong>sheets_writer.py</strong> init / append / read</span>
+    </div>
+  </div>
+
+  <hr>
+
+  <!-- ─── Technical deep-dive ─── -->
+  <h2 style="font-size:1.4rem; margin-bottom:1rem;">⚙️ Technical Details</h2>
+
+  <div class="side-by-side">
+    <div class="step" style="margin:0;">
+      <div class="step-header"><div class="step-number">$</div><div class="step-title">Cost Breakdown</div></div>
+      <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+        <tr><td style="padding:4px 0; color:#94a3b8;">PaddleOCR (local)</td><td style="text-align:right;color:#34d399;">$0.00</td></tr>
+        <tr><td style="padding:4px 0; color:#94a3b8;">OpenRouter (gpt-4o-mini)</td><td style="text-align:right;color:#fbbf24;">~$0.0001/card</td></tr>
+        <tr><td style="padding:4px 0; color:#94a3b8;">Google Sheets API</td><td style="text-align:right;color:#34d399;">$0.00</td></tr>
+        <tr style="border-top:1px solid #334155;"><td style="padding:6px 0; font-weight:600;">Total</td><td style="text-align:right; font-weight:600;">~$0.0001 / card</td></tr>
+      </table>
+    </div>
+
+    <div class="step" style="margin:0;">
+      <div class="step-header"><div class="step-number">#</div><div class="step-title">File Map</div></div>
+      <div class="file-list">
+        <span class="file-pill"><strong>main.py</strong> Entry point</span>
+        <span class="file-pill"><strong>config.py</strong> Settings</span>
+        <span class="file-pill"><strong>image_processor.py</strong> No-op pass-through</span>
+        <span class="file-pill"><strong>ocr_engine.py</strong> PaddleOCR wrapper</span>
+        <span class="file-pill"><strong>info_extractor.py</strong> LLM + regex + scoring</span>
+        <span class="file-pill"><strong>sheets_writer.py</strong> Google Sheets</span>
+        <span class="file-pill"><strong>setup_google_sheets.py</strong> Setup wizard</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:1rem;">
+    <div class="step">
+      <div class="step-header"><div class="step-number">α</div><div class="step-title">Project History — Why it's built this way</div></div>
+      <ul>
+        <li><strong>Was:</strong> CLAHE + adaptive threshold preprocessing → <em>destroyed text</em></li>
+        <li><strong>Now:</strong> Raw image to PaddleOCR — it's trained on natural photos</li>
+        <li><strong>Was:</strong> Fixed zones (header/body/contact) → <em>broke on every layout</em></li>
+        <li><strong>Now:</strong> Scoring + LLM — every line scored independently, layout-agnostic</li>
+        <li><strong>Was:</strong> Pure heuristics → <em>failed on "Consulting Division" vs names</em></li>
+        <li><strong>Now:</strong> LLM understands semantics, heuristics fallback when offline</li>
+        <li><strong>Was:</strong> PaddlePaddle dependency (2 GB) → <em>bloated setup</em></li>
+        <li><strong>Now:</strong> ONNX Runtime — lightweight, CPU-only, ~30 MB models</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>
+    Card Manager · Built with PaddleOCR + OpenRouter + Google Sheets
+  </footer>
+
+</div>
+</body>
+</html>

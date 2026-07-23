@@ -1,24 +1,8 @@
 #!/usr/bin/env python3
 """
-Card Manager — Extract details from business card images and save to Google Sheets.
-
-Uses OpenCV for image processing + PaddleOCR (ONNX Runtime) for OCR.
-Hybrid extraction: regex for email/phone, LLM (OpenRouter) for name/position/company.
+Card Manager — Extract business card details using vision LLM and save to Google Sheets.
 
 Usage:
-    # Process a single card
-    python main.py --image path/to/card.jpg
-
-    # Process and write to Google Sheets (after setup)
-    python main.py --image path/to/card.jpg --sheet
-
-    # Initialize Google Sheet headers
-    python main.py --init-sheet
-
-    # Process multiple cards
-    python main.py --image path/to/card1.jpg path/to/card2.jpg --sheet
-
-    # Interactive web UI (Streamlit)
     python -m streamlit run main.py -- --ui
 """
 
@@ -26,19 +10,18 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+import re
 
 from config import (
     GOOGLE_CREDENTIALS_PATH,
     GOOGLE_SHEET_ID,
-    OCR_LANGUAGE,
-    LLM_ENABLED,
+    GOOGLE_OAUTH_ENABLED,
+    GOOGLE_OAUTH_SCOPES,
     LLM_API_KEY,
     LLM_MODEL,
     LLM_BASE_URL,
 )
-from image_processor import prepare
-from ocr_engine import OCREngine
-from info_extractor import extract_info_from_boxes
+from info_extractor import extract_info_from_image
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,126 +31,46 @@ logging.basicConfig(
 logger = logging.getLogger("card_manager")
 
 
-def process_card(
-    image_path: str,
-    ocr_engine: OCREngine,
-    use_llm: bool = LLM_ENABLED,
-    llm_api_key: str = LLM_API_KEY,
-    llm_model: str = LLM_MODEL,
-    llm_base_url: str = LLM_BASE_URL,
-) -> dict:
-    """
-    Process a single business card image end-to-end.
-
-    Steps:
-      1. Preprocess image (OpenCV: deskew, denoise, enhance contrast)
-      2. Run OCR (PaddleOCR via ONNX Runtime)
-      3. Extract fields (LLM + regex for name/pos/co; regex for phone/email)
-
-    Args:
-        image_path: Path to the card image file
-        ocr_engine: Initialized OCR engine
-        use_llm: Try LLM extraction for name/position/company
-        llm_api_key: OpenRouter API key
-        llm_model: Model name (e.g. "openai/gpt-4o-mini")
-        llm_base_url: OpenRouter API base URL
-
-    Returns:
-        Dict with keys: company, name, position, phone, email
-    """
+def process_card(image_path: str) -> dict:
+    """Send image to vision LLM and extract card fields."""
     path = Path(image_path)
     if not path.exists():
         logger.error(f"File not found: {image_path}")
-        return {"company": "null", "name": "null", "position": "null",
-                "phone": "null", "email": "null"}
+        return dict(name="null", company="null", position="null",
+                    phone="null", email="null")
 
     logger.info(f"\n{'='*50}")
     logger.info(f"Processing: {path.name}")
     logger.info(f"{'='*50}")
 
-    # Step 1: Lightly prepare image (resize + mild deskew, keep color)
-    logger.info("  [1/3] Preparing image...")
-    ocr_image_path = prepare(image_path)
-    logger.info(f"  -> Prepared image: {Path(ocr_image_path).name}")
-
-    # Step 2: OCR with bounding boxes
-    logger.info("  [2/3] Running OCR (ONNX Runtime + PaddleOCR)...")
-    items = ocr_engine.extract_text(ocr_image_path)  # (text, conf, bbox) tuples
-
-    # Display raw OCR output
-    if items:
-        logger.info("  -> Text detected (top→bottom):")
-        for text, conf, bbox in items:
-            logger.info(f"     [{conf:.2f}] {text}")
-    else:
-        logger.warning("  -> No text detected!")
-        Path(ocr_image_path).unlink(missing_ok=True)
-        return {"company": "null", "name": "null", "position": "null",
-                "phone": "null", "email": "null"}
-
-    # Clean up temp file
-    Path(ocr_image_path).unlink(missing_ok=True)
-
-    # Step 3: Extract information (hybrid — LLM + regex)
-    mode = "LLM + regex" if use_llm and llm_api_key else "scoring + regex"
-    logger.info(f"  [3/3] Extracting fields ({mode})...")
-    card_info = extract_info_from_boxes(
-        items,
-        use_llm=use_llm,
-        llm_api_key=llm_api_key,
-        llm_model=llm_model,
-        llm_base_url=llm_base_url,
+    card_info = extract_info_from_image(
+        image_path,
+        api_key=LLM_API_KEY,
+        model=LLM_MODEL,
+        base_url=LLM_BASE_URL,
     )
 
-    logger.info(f"\n  ┌─ Extracted Card Info ─────────────────────────────┐")
-    logger.info(f"  │ Company    : {card_info['company']:<40}│")
-    logger.info(f"  │ Name       : {card_info['name']:<40}│")
-    logger.info(f"  │ Position   : {card_info['position']:<40}│")
-    logger.info(f"  │ Phone      : {card_info['phone']:<40}│")
-    logger.info(f"  │ Email      : {card_info['email']:<40}│")
-    logger.info(f"  └─────────────────────────────────────────────────────┘")
+    logger.info(f"\n  ┌─ Extracted ────────────────────────────────────────────┐")
+    logger.info(f"  │ Name     : {card_info['name']:<40}│")
+    logger.info(f"  │ Company  : {card_info['company']:<40}│")
+    logger.info(f"  │ Position : {card_info['position']:<40}│")
+    logger.info(f"  │ Phone    : {card_info['phone']:<40}│")
+    logger.info(f"  │ Email    : {card_info['email']:<40}│")
+    logger.info(f"  └──────────────────────────────────────────────────────────┘")
 
     return card_info
 
 
 def cli_main():
-    """Command-line entry point."""
     parser = argparse.ArgumentParser(
         description="Card Manager — Extract business card data to Google Sheets",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python main.py --image card.jpg
-  python main.py --image card1.jpg card2.jpg --sheet
-  python main.py --init-sheet
-  python main.py --list
-        """,
     )
-    parser.add_argument(
-        "--image", "-i",
-        nargs="+",
-        help="Path(s) to business card image(s)",
-    )
-    parser.add_argument(
-        "--sheet", "-s",
-        action="store_true",
-        help="Write results to Google Sheet",
-    )
-    parser.add_argument(
-        "--init-sheet",
-        action="store_true",
-        help="Initialize the Google Sheet with headers (run once)",
-    )
-    parser.add_argument(
-        "--list",
-        action="store_true",
-        help="List all cards from the Google Sheet",
-    )
-    parser.add_argument(
-        "--ui",
-        action="store_true",
-        help="Launch the Streamlit web interface",
-    )
+    parser.add_argument("--image", "-i", nargs="+", help="Path(s) to business card image(s)")
+    parser.add_argument("--sheet", "-s", action="store_true", help="Write results to Google Sheet")
+    parser.add_argument("--init-sheet", action="store_true", help="Initialize the Google Sheet with headers")
+    parser.add_argument("--list", action="store_true", help="List all cards from the Google Sheet")
+    parser.add_argument("--ui", action="store_true", help="Launch the Streamlit web interface")
 
     args, _ = parser.parse_known_args()
 
@@ -175,7 +78,6 @@ Examples:
         _launch_streamlit()
         return
 
-    # Sheet operations
     if args.init_sheet:
         _run_init_sheet()
         return
@@ -184,81 +86,36 @@ Examples:
         _run_list_cards()
         return
 
-    if not args.image:
-        parser.print_help()
-        logger.error("\nPlease provide at least one image path with --image")
-        sys.exit(1)
-
-    # Initialize OCR engine (once, reused across multiple cards)
-    ocr_engine = OCREngine(lang=OCR_LANGUAGE, use_onnx=True)
-
-    for img_path in args.image:
-        card_info = process_card(img_path, ocr_engine)
-
+    for img_path in (args.image or []):
+        card_info = process_card(img_path)
         if args.sheet:
             _write_to_sheet(card_info)
 
-        print()  # spacing between cards
-
-    logger.info("Done.")
+    if not args.image:
+        parser.print_help()
 
 
 def _run_init_sheet():
-    """Initialize the Google Sheet with headers."""
     from sheets_writer import initialize_sheet
-
     logger.info("Initializing Google Sheet...")
-
-    if GOOGLE_SHEET_ID == "YOUR_GOOGLE_SHEET_ID_HERE":
-        logger.error(
-            "Please set GOOGLE_SHEET_ID in config.py first.\n"
-            "1. Create a Google Sheet\n"
-            "2. Copy the Sheet ID from the URL\n"
-            "3. Set it in config.py"
-        )
-        sys.exit(1)
-
     success = initialize_sheet(GOOGLE_CREDENTIALS_PATH, GOOGLE_SHEET_ID)
-    if success:
-        logger.info("✅ Sheet initialized successfully!")
-    else:
-        logger.error("❌ Failed to initialize sheet. Check credentials.")
+    logger.info("Done!" if success else "Failed.")
 
 
 def _run_list_cards():
-    """List all cards from the Google Sheet."""
     from sheets_writer import get_all_cards
-
-    if GOOGLE_SHEET_ID == "YOUR_GOOGLE_SHEET_ID_HERE":
-        logger.error("Please set GOOGLE_SHEET_ID in config.py first.")
-        sys.exit(1)
-
     records = get_all_cards(GOOGLE_CREDENTIALS_PATH, GOOGLE_SHEET_ID)
-    if records is None:
-        logger.error("Failed to read sheet.")
-        return
-
     if not records:
-        logger.info("No cards found in the sheet.")
+        logger.info("No cards found.")
         return
-
-    print(f"\n{'─'*70}")
-    print(f"Total cards: {len(records)}")
-    print(f"{'─'*70}")
+    print(f"\nTotal cards: {len(records)}")
     for i, card in enumerate(records, 1):
         print(f"  {i}. {card.get('Card Holder Name', '?')} | {card.get('Company Name', '?')} | {card.get('Position', '?')}")
-        print(f"     📞 {card.get('Contact Number', '?')}  ✉️ {card.get('Email Address', '?')}")
-        print()
+        print(f"     {card.get('Phone Number', '?')}  {card.get('Email Address', '?')}")
 
 
 def _write_to_sheet(card_info: dict) -> bool:
-    """Write card info to Google Sheet. Returns True on success."""
     from sheets_writer import append_card, initialize_sheet
-
-    if GOOGLE_SHEET_ID == "YOUR_GOOGLE_SHEET_ID_HERE":
-        logger.error("Sheet ID not configured.")
-        return False
-
     try:
         initialize_sheet(GOOGLE_CREDENTIALS_PATH, GOOGLE_SHEET_ID)
         return append_card(GOOGLE_CREDENTIALS_PATH, GOOGLE_SHEET_ID, card_info)
@@ -268,114 +125,234 @@ def _write_to_sheet(card_info: dict) -> bool:
 
 
 def _launch_streamlit():
-    """Launch Streamlit web UI."""
     import streamlit as st
     import tempfile
     from PIL import Image
     import time
-
-    st.set_page_config(
-        page_title="Card Manager",
-        page_icon="💳",
-        layout="centered",
+    import pandas as pd
+    from sheets_writer import (
+        initialize_sheet, append_card, get_all_cards,
+        get_oauth_client, save_oauth_token, clear_oauth_token,
+    )
+    from config import (
+        GOOGLE_CREDENTIALS_PATH, GOOGLE_SHEET_ID,
+        GOOGLE_OAUTH_ENABLED,
     )
 
-    # ─── Custom CSS for cleaner look ────────────────────────────────────────
-    st.markdown("""
-        <style>
-        .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-        .stButton > button { width: 100%; }
-        .card-result { padding: 0.75rem; }
-        </style>
-    """, unsafe_allow_html=True)
+    st.set_page_config(page_title="Card Manager", page_icon="💳", layout="centered")
 
-    st.title("💳 Card Manager")
-    st.caption("Upload a business card — extracts details and saves to Google Sheets.")
+    # Session state
+    for key in ("sheet_id", "auth_method", "oauth_authd", "oauth_active"):
+        if key not in st.session_state:
+            st.session_state[key] = "service_account" if key == "auth_method" else (False if key != "sheet_id" else None)
 
-    # Initialize OCR engine once
-    if "ocr" not in st.session_state:
-        with st.spinner("Loading OCR engine (ONNX models)..."):
-            st.session_state.ocr = OCREngine(lang=OCR_LANGUAGE, use_onnx=True)
+    if GOOGLE_OAUTH_ENABLED and get_oauth_client() and not st.session_state.oauth_authd:
+        st.session_state.oauth_authd = True
+        st.session_state.auth_method = "oauth"
 
-    # ─── Upload ──────────────────────────────────────────────────────────────
-    uploaded_file = st.file_uploader(
-        "Choose a business card image",
-        type=["jpg", "jpeg", "png", "webp", "bmp"],
-        label_visibility="collapsed",
-    )
+    # Handle OAuth callback
+    if GOOGLE_OAUTH_ENABLED and not st.session_state.oauth_authd and st.query_params.get("code"):
+        _handle_oauth_callback(st)
+        return
 
-    # ─── Main area (only shows after upload) ────────────────────────────────
-    if uploaded_file is not None:
-        # Save uploaded file to temp
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-            tmp.write(uploaded_file.getvalue())
-            tmp_path = tmp.name
+    # LANDING
+    if GOOGLE_OAUTH_ENABLED and not st.session_state.oauth_authd and not st.session_state.oauth_active:
+        st.title("💳 Card Manager")
+        st.write("Upload a business card. We extract the details and save them to your Google Sheet.")
 
-        # Image column + action column
-        img_col, result_col = st.columns([1, 1], gap="medium")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("📸", "Upload", "Snap a photo")
+        c2.metric("⚡", "Extract", "AI reads it")
+        c3.metric("📊", "Save", "To your sheet")
 
-        with img_col:
-            image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Card", use_container_width=True)
+        st.divider()
+        st.subheader("Sign in with Google")
+        st.write("Connect your account to save cards to your own spreadsheet.")
+        if st.button("Continue with Google", type="primary"):
+            st.session_state.oauth_active = True
+            st.rerun()
+        st.caption("Your data goes to your Google account.")
+        return
 
-        with result_col:
-            extract_btn = st.button("🔍 Extract & Save", type="primary")
+    # OAUTH FLOW
+    if GOOGLE_OAUTH_ENABLED and st.session_state.oauth_active and not st.session_state.oauth_authd:
+        _render_oauth(st)
+        return
 
-        if extract_btn:
-            # Progress indicators (full width, below the columns)
-            progress_bar = st.progress(0)
-            status = st.empty()
+    # AUTHENTICATED
+    is_oauth = (st.session_state.auth_method == "oauth" and st.session_state.oauth_authd)
 
-            status.info("🔎 Running OCR (ONNX Runtime)...")
-            progress_bar.progress(30)
+    with st.sidebar:
+        st.header("Card Manager")
+        if is_oauth:
+            st.success("Google account connected")
+            if st.button("Disconnect"):
+                clear_oauth_token()
+                st.session_state.oauth_authd = False
+                st.session_state.sheet_id = None
+                st.session_state.oauth_active = False
+                st.rerun()
 
-            card_info = process_card(tmp_path, st.session_state.ocr)
+        st.subheader("Google Sheet")
+        si = st.text_input("Sheet ID or URL", placeholder="Paste your sheet ID or URL", key="si")
+        if si:
+            m = re.search(r"/d/([a-zA-Z0-9_-]+)", si)
+            st.session_state.sheet_id = m.group(1) if m else si
+        if st.session_state.sheet_id:
+            st.success("Sheet ready")
+        else:
+            st.warning("No sheet set")
+        if is_oauth and st.button("Create New Sheet"):
+            _create_new_sheet(st)
 
-            status.info("📋 Extracting fields...")
-            progress_bar.progress(60)
+    st.subheader("Scan a Card")
+    st.write("Upload a business card photo.")
 
-            # Display results in a clean card
-            with st.container(border=True):
-                st.markdown("### 📇 Extracted Info")
-                for label, value, icon in [
-                    ("Company", card_info["company"], "🏢"),
-                    ("Name", card_info["name"], "👤"),
-                    ("Position", card_info["position"], "💼"),
-                    ("Phone", card_info["phone"], "📞"),
-                    ("Email", card_info["email"], "✉️"),
-                ]:
-                    st.markdown(
-                        f"<div style='display:flex; gap:8px; margin-bottom:6px;'>"
-                        f"<span style='min-width:80px; color:#888;'>{icon} {label}</span>"
-                        f"<span>{value}</span>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
+    uf = st.file_uploader("Choose an image", type=["jpg", "jpeg", "png", "webp", "bmp"])
 
-            # Auto-save to Google Sheet
-            status.info("💾 Saving to Google Sheet...")
-            progress_bar.progress(85)
-            saved = _write_to_sheet(card_info)
-            if saved:
-                result_col.success("✅ Saved to Google Sheet!")
-            else:
-                result_col.error("❌ Failed to save to sheet. Check console.")
+    if uf is not None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uf.name).suffix or ".jpg") as tmp:
+            tmp.write(uf.getvalue())
+            img_path = tmp.name
 
-            progress_bar.progress(100)
-            status.success("✅ Done!")
-            time.sleep(2)
-            status.empty()
-            progress_bar.empty()
+        c1, c2 = st.columns(2)
+        with c1:
+            st.image(Image.open(uf), use_container_width=True)
+        with c2:
+            if st.button("Extract & Save", type="primary", use_container_width=True):
+                if not st.session_state.sheet_id:
+                    st.error("Set a sheet ID in the sidebar first.")
+                else:
+                    bar = st.progress(0)
+                    status = st.empty()
 
-    # ─── Recent entries footer ──────────────────────────────────────────────
-    with st.expander("📋 View recent entries"):
-        if st.button("Refresh", type="secondary"):
-            from sheets_writer import get_all_cards
-            records = get_all_cards(GOOGLE_CREDENTIALS_PATH, GOOGLE_SHEET_ID)
-            if records:
-                st.dataframe(records.tail(20), use_container_width=True)
-            else:
-                st.info("No entries found or sheet not configured.")
+                    if not LLM_API_KEY:
+                        st.error("No API key set. Add LLM_API_KEY in config.py.")
+                    else:
+                        status.info("Analyzing card with vision AI...")
+                        bar.progress(30)
+
+                        info = process_card(img_path)
+
+                        bar.progress(60)
+                        status.info("Setting up sheet headers...")
+                        initialize_sheet(
+                            credentials_path=GOOGLE_CREDENTIALS_PATH, sheet_id=GOOGLE_SHEET_ID,
+                            oauth=is_oauth, oauth_sheet_id=st.session_state.sheet_id,
+                        )
+
+                        status.info("Saving to Google Sheets...")
+                        bar.progress(85)
+
+                        ok = append_card(
+                            credentials_path=GOOGLE_CREDENTIALS_PATH, sheet_id=GOOGLE_SHEET_ID,
+                            card_data=info, oauth=is_oauth, oauth_sheet_id=st.session_state.sheet_id,
+                        )
+
+                        if ok:
+                            bar.progress(100)
+                            status.success("Saved to Google Sheet!")
+                            st.json(info)
+                        else:
+                            st.error("Failed to save.")
+
+                    time.sleep(1.5)
+                    status.empty()
+                    bar.empty()
+
+    if st.session_state.sheet_id and st.button("Refresh entries"):
+        recs = get_all_cards(
+            credentials_path=GOOGLE_CREDENTIALS_PATH, sheet_id=GOOGLE_SHEET_ID,
+            oauth=is_oauth, oauth_sheet_id=st.session_state.sheet_id,
+        )
+        if recs:
+            st.dataframe(pd.DataFrame(recs).tail(10), use_container_width=True, hide_index=True)
+
+
+def _handle_oauth_callback(st):
+    from google_auth_oauthlib.flow import Flow
+    from sheets_writer import save_oauth_token
+    from pathlib import Path
+    import json, os
+    from config import GOOGLE_OAUTH_SCOPES
+
+    secret_path = Path(__file__).parent / "oauth_client_secret.json"
+    state_path = os.path.expanduser("~/.claude/card-auth-state.json")
+
+    if not os.path.exists(state_path):
+        st.error("Session expired. Go back and try again.")
+        return
+
+    try:
+        with open(state_path) as f:
+            saved = json.load(f)
+        os.remove(state_path)
+
+        flow = Flow.from_client_secrets_file(
+            str(secret_path), scopes=GOOGLE_OAUTH_SCOPES,
+            redirect_uri="http://127.0.0.1:8501")
+        flow.code_verifier = saved["cv"]
+
+        flow.fetch_token(code=st.query_params.get("code"))
+        save_oauth_token(flow.credentials)
+
+        st.session_state.oauth_authd = True
+        st.session_state.auth_method = "oauth"
+        st.session_state.oauth_active = False
+        st.query_params.clear()
+        st.success("Connected!")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Connection failed: {e}")
+
+
+def _render_oauth(st):
+    from google_auth_oauthlib.flow import Flow
+    from pathlib import Path
+    import json, os
+    from config import GOOGLE_OAUTH_SCOPES
+
+    secret_path = Path(__file__).parent / "oauth_client_secret.json"
+    if not secret_path.exists():
+        st.error("OAuth config missing.")
+        st.session_state.oauth_active = False
+        return
+
+    state_path = os.path.expanduser("~/.claude/card-auth-state.json")
+
+    flow = Flow.from_client_secrets_file(
+        str(secret_path), scopes=GOOGLE_OAUTH_SCOPES,
+        redirect_uri="http://127.0.0.1:8501")
+    auth_url, _ = flow.authorization_url(prompt="consent")
+
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    with open(state_path, "w") as f:
+        json.dump({"cv": flow.code_verifier}, f)
+
+    st.title("Connect Google Sheets")
+    st.write("Click below to sign in with Google.")
+    st.link_button("Open Google Sign-in", auth_url, use_container_width=True)
+
+    if st.button("Back", use_container_width=True):
+        st.session_state.oauth_active = False
+        st.rerun()
+
+
+def _create_new_sheet(st):
+    from sheets_writer import get_oauth_client, initialize_sheet
+
+    client = get_oauth_client()
+    if not client:
+        st.error("Not authenticated.")
+        return
+    try:
+        sheet = client.create("Card Manager - Business Cards")
+        st.session_state.sheet_id = sheet.id
+        initialize_sheet(oauth=True, oauth_sheet_id=sheet.id)
+        st.success("New sheet created!")
+        st.rerun()
+    except:
+        st.error("Failed to create sheet.")
 
 
 if __name__ == "__main__":

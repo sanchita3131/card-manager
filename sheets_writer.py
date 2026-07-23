@@ -1,36 +1,30 @@
 """
-Google Sheets integration for card data.
-
-Writes extracted card information to a Google Sheet.
-Uses a service account for authentication (no OAuth popup needed).
+Google Sheets integration — supports two auth modes:
+  1. Service account (server-to-server, no user interaction)
+  2. OAuth 2.0 (user signs in with their own Google account)
 """
 
 import logging
+import os
+import pickle
 from typing import Dict, Optional, List
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-# Column headers matching the user's specification
 HEADERS = [
-    "Company Name",
     "Card Holder Name",
+    "Company Name",
     "Position",
-    "Contact Number",
+    "Phone Number",
     "Email Address",
-    "Timestamp",
 ]
 
+# ─── Service Account Auth ─────────────────────────────────────────────────
 
-def _get_google_sheets_client(credentials_path: str):
-    """
-    Authenticate with Google Sheets using a service account.
 
-    Args:
-        credentials_path: Path to the service account JSON key file
-
-    Returns:
-        gspread client object
-    """
+def _get_service_account_client(credentials_path: str):
+    """Authenticate with Google Sheets using a service account."""
     import gspread
     from google.oauth2.service_account import Credentials
 
@@ -39,35 +33,99 @@ def _get_google_sheets_client(credentials_path: str):
         "https://www.googleapis.com/auth/drive",
     ]
     creds = Credentials.from_service_account_file(credentials_path, scopes=scopes)
-    client = gspread.authorize(creds)
-    return client
+    return gspread.authorize(creds)
 
 
-def initialize_sheet(credentials_path: str, sheet_id: str) -> bool:
+# ─── OAuth 2.0 Auth (user signs in with Google) ──────────────────────────
+
+
+def get_oauth_client():
+    """
+    Create a gspread client from stored OAuth credentials.
+    The token file is created after the first successful OAuth flow.
+    """
+    import gspread
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
+    token_path = os.path.expanduser("~/.claude/card-manager-oauth-token.pickle")
+
+    if not os.path.exists(token_path):
+        return None
+
+    with open(token_path, "rb") as f:
+        creds = pickle.load(f)
+
+    # Refresh if expired
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        with open(token_path, "wb") as f:
+            pickle.dump(creds, f)
+
+    if not creds or not creds.valid:
+        return None
+
+    return gspread.authorize(creds)
+
+
+def save_oauth_token(creds):
+    """Persist OAuth credentials for reuse."""
+    import pickle
+
+    path = os.path.expanduser("~/.claude")
+    os.makedirs(path, exist_ok=True)
+    token_path = os.path.join(path, "card-manager-oauth-token.pickle")
+    with open(token_path, "wb") as f:
+        pickle.dump(creds, f)
+    logger.info("OAuth token saved.")
+
+
+def clear_oauth_token():
+    """Remove stored OAuth token (sign out)."""
+    token_path = os.path.expanduser("~/.claude/card-manager-oauth-token.pickle")
+    if os.path.exists(token_path):
+        os.remove(token_path)
+        logger.info("OAuth token cleared.")
+
+
+# ─── Sheet Operations ────────────────────────────────────────────────────
+
+
+def _get_client(credentials_path: str = None, oauth: bool = False):
+    """Get a gspread client using the preferred auth method."""
+    if oauth:
+        client = get_oauth_client()
+        if client:
+            return client
+        raise PermissionError("Not authenticated with Google. Sign in first.")
+    if credentials_path:
+        return _get_service_account_client(credentials_path)
+    raise ValueError("No authentication method available.")
+
+
+def initialize_sheet(credentials_path: str = None, sheet_id: str = None,
+                     oauth: bool = False, oauth_sheet_id: str = None) -> bool:
     """
     Ensure the target sheet exists and has the correct headers.
 
-    Creates the sheet if it doesn't exist, and writes headers if the
-    first row is empty.
-
     Args:
-        credentials_path: Path to service account JSON key
-        sheet_id: Google Sheet ID from the sheet URL
+        credentials_path: Path to service account JSON key (service acct mode)
+        sheet_id: Sheet ID (service acct mode)
+        oauth: Use OAuth authentication
+        oauth_sheet_id: Sheet ID (OAuth mode)
 
     Returns:
         True if successful, False otherwise
     """
     try:
-        client = _get_google_sheets_client(credentials_path)
-        sheet = client.open_by_key(sheet_id).sheet1
+        sid = oauth_sheet_id if oauth else sheet_id
+        client = _get_client(credentials_path, oauth)
+        sheet = client.open_by_key(sid).sheet1
 
-        # Check if headers already exist
         existing = sheet.row_values(1)
         if not existing or existing[0] != HEADERS[0]:
-            # Use the worksheet title as the sheet name
             sheet.clear()
             sheet.append_row(HEADERS)
-            # Bold headers
             sheet.format("1:1", {"textFormat": {"bold": True}})
             logger.info("Sheet initialized with headers.")
         else:
@@ -80,31 +138,33 @@ def initialize_sheet(credentials_path: str, sheet_id: str) -> bool:
         return False
 
 
-def append_card(credentials_path: str, sheet_id: str, card_data: Dict[str, str]) -> bool:
+def append_card(credentials_path: str = None, sheet_id: str = None,
+                card_data: Dict[str, str] = None,
+                oauth: bool = False, oauth_sheet_id: str = None) -> bool:
     """
     Append a card entry to the Google Sheet.
 
     Args:
-        credentials_path: Path to service account JSON key
-        sheet_id: Google Sheet ID
+        credentials_path: Path to service account JSON key (service acct mode)
+        sheet_id: Sheet ID (service acct mode)
         card_data: Dict with keys: company, name, position, phone, email
+        oauth: Use OAuth authentication
+        oauth_sheet_id: Sheet ID (OAuth mode)
 
     Returns:
         True if successful, False otherwise
     """
-    from datetime import datetime
-
     try:
-        client = _get_google_sheets_client(credentials_path)
-        sheet = client.open_by_key(sheet_id).sheet1
+        sid = oauth_sheet_id if oauth else sheet_id
+        client = _get_client(credentials_path, oauth)
+        sheet = client.open_by_key(sid).sheet1
 
         row = [
-            card_data.get("company", "null"),
             card_data.get("name", "null"),
+            card_data.get("company", "null"),
             card_data.get("position", "null"),
             card_data.get("phone", "null"),
             card_data.get("email", "null"),
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         ]
 
         sheet.append_row(row, value_input_option="RAW")
@@ -116,24 +176,33 @@ def append_card(credentials_path: str, sheet_id: str, card_data: Dict[str, str])
         return False
 
 
-def get_all_cards(credentials_path: str, sheet_id: str) -> Optional[List[Dict[str, str]]]:
+def get_all_cards(credentials_path: str = None, sheet_id: str = None,
+                  oauth: bool = False, oauth_sheet_id: str = None) -> Optional[List[Dict[str, str]]]:
     """
     Retrieve all card entries from the sheet.
-
-    Args:
-        credentials_path: Path to service account JSON key
-        sheet_id: Google Sheet ID
-
-    Returns:
-        List of dicts, or None on error
     """
     try:
-        client = _get_google_sheets_client(credentials_path)
-        sheet = client.open_by_key(sheet_id).sheet1
-
-        records = sheet.get_all_records()
-        return records
+        sid = oauth_sheet_id if oauth else sheet_id
+        client = _get_client(credentials_path, oauth)
+        sheet = client.open_by_key(sid).sheet1
+        return sheet.get_all_records()
 
     except Exception as e:
         logger.error(f"Failed to read from Google Sheet: {e}")
         return None
+
+
+def list_user_sheets(client) -> List[dict]:
+    """
+    List sheets the authenticated user has access to.
+    Only used in OAuth mode.
+    """
+    try:
+        sheet_list = client.openall()
+        return [
+            {"id": s.id, "title": s.title, "url": f"https://docs.google.com/spreadsheets/d/{s.id}/edit"}
+            for s in sheet_list[:20]
+        ]
+    except Exception as e:
+        logger.error(f"Failed to list sheets: {e}")
+        return []

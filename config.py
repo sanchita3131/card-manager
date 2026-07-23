@@ -15,27 +15,29 @@ Edit the values below to match your setup.
 GOOGLE_CREDENTIALS_PATH = "credentials.json"
 GOOGLE_SHEET_ID = "1IA8IpheEntBOsgHV67DZ4kC56B1Y9LOtN0P3IUWmk0c"
 
-# ─── OCR Settings ─────────────────────────────────────────────────────────────
-# Language for OCR: 'en' for English
-OCR_LANGUAGE = "en"
-
-# ─── Image Processing ─────────────────────────────────────────────────────────
-# Target DPI for preprocessing
-TARGET_DPI = 300
+# ─── LLM (Vision) Settings ────────────────────────────────────────────────────
+# Sends the card image directly to a vision LLM (no OCR needed).
+LLM_ENABLED = True
+LLM_PROVIDER = "openrouter"
+LLM_BASE_URL = "https://openrouter.ai/api/v1"
+LLM_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+# LLM_MODEL = "openai/gpt-4o-mini"  # Faster, ~$0.0001/card
+LLM_API_KEY = ""  # ← Paste your OpenRouter API key here
 
 # ─── Google Account ───────────────────────────────────────────────────────────
 # The Google account that OWNS the sheet (for sharing info)
 GOOGLE_ACCOUNT_EMAIL = "sanchitawork31@gmail.com"
 
-# ─── LLM (Hybrid Extraction) ──────────────────────────────────────────────────
-# Name, position, and company are extracted via LLM (OpenRouter API).
-# Email and phone still use regex (near-perfect).
-# The scoring system in info_extractor.py acts as fallback if the API is down.
-
-LLM_ENABLED = True                  # Set False to fallback to pure heuristics
-LLM_PROVIDER = "openrouter"         # openrouter
-LLM_BASE_URL = "https://openrouter.ai/api/v1"
-LLM_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"   # Cheap & fast (~$0.15/M tokens input)
-# LLM_MODEL = "anthropic/claude-3-5-haiku"  # Alternative if you prefer Claude
-# LLM_MODEL = "google/gemini-2.0-flash-lite-001"  # Cheapest option
-LLM_API_KEY = ""                    # ← Paste your OpenRouter API key here
+# ─── Google OAuth (for user sign-in) ──────────────────────────────────────────
+# Set this to True to use OAuth (user signs in with Google) instead of service account
+# For OAuth: Go to Google Cloud Console → APIs & Services → Credentials
+#   → Create OAuth client ID → "Web application" or "Desktop app"
+#   → Set redirect URI to http://localhost:8501 for local testing
+#   → Download JSON and save as "oauth_client_secret.json"
+GOOGLE_OAUTH_ENABLED = True
+GOOGLE_OAUTH_CLIENT_SECRET = "oauth_client_secret.json"
+# Scopes the app requests
+GOOGLE_OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+]
