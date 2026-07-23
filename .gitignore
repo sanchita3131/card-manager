@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.env
+
+# Secrets — DON'T commit service account keys
+credentials.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Streamlit
+*.streamlit/
+
+# ORT model cache (auto-downloaded)
+.paddlex/
+
+# Test card images
+card*.jpeg

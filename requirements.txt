@@ -1,0 +1,24 @@
+# Card Manager - Dependencies
+# Zero LLM API cost — fully local processing
+
+# Image processing
+opencv-python>=4.9.0
+numpy>=1.26.0
+
+# OCR via ONNX Runtime (PaddleOCR with ONNX backend)
+# use_onnx=True in PaddleOCR uses ONNX Runtime instead of PaddlePaddle
+paddleocr>=2.8.0
+onnxruntime>=1.17.0
+
+# Google Sheets API
+google-auth>=2.29.0
+google-api-python-client>=2.126.0
+google-auth-httplib2>=0.2.0
+gspread>=6.1.2
+
+# LLM extraction (OpenRouter — OpenAI-compatible API)
+openai>=1.0.0
+
+# Optional: Web interface
+streamlit>=1.35.0
+Pillow>=10.0.0
