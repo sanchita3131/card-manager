@@ -202,9 +202,8 @@ def _launch_streamlit():
                     _create_new_sheet(st)
             if st.button("Disconnect"):
                 clear_oauth_token()
-                st.session_state.oauth_authd = False
-                st.session_state.sheet_id = None
-                st.session_state.oauth_active = False
+                for _k in ("oauth_authd", "sheet_id", "oauth_active", "oauth_creds"):
+                    st.session_state.pop(_k, None)
                 st.rerun()
 
     st.subheader("Scan a Card")
@@ -348,7 +347,6 @@ def _get_oauth_flow(redirect_uri: str | None = None):
 
 def _handle_oauth_callback(st):
     import json, os
-    from sheets_writer import save_oauth_token
 
     state_path = os.path.expanduser("~/.claude/card-auth-state.json")
 
@@ -365,7 +363,8 @@ def _handle_oauth_callback(st):
         flow.code_verifier = saved["cv"]
 
         flow.fetch_token(code=st.query_params.get("code"))
-        save_oauth_token(flow.credentials)
+        # Store in browser session only — never in a shared server file
+        st.session_state["oauth_creds"] = flow.credentials
 
         # Auto-create the sheet on first sign-in
         from sheets_writer import save_sheet_id

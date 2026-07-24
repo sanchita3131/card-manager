@@ -44,25 +44,42 @@ def _get_service_account_client(credentials_path: str):
 def get_oauth_client():
     """
     Create a gspread client from stored OAuth credentials.
-    The token file is created after the first successful OAuth flow.
+
+    Priority:
+      1. Current browser session (st.session_state) — Streamlit Cloud
+      2. Pickle file on disk — local development only
     """
     import gspread
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
-    token_path = os.path.expanduser("~/.claude/card-manager-oauth-token.pickle")
+    creds = None
 
-    if not os.path.exists(token_path):
+    # 1. Check browser session first (per-user, never shared across devices)
+    try:
+        import streamlit as st
+        creds = st.session_state.get("oauth_creds")
+    except (ImportError, RuntimeError, AttributeError):
+        pass
+
+    # 2. Fallback to pickle file (local dev only — never on Streamlit Cloud)
+    if not creds:
+        token_path = os.path.expanduser("~/.claude/card-manager-oauth-token.pickle")
+        if os.path.exists(token_path):
+            with open(token_path, "rb") as f:
+                creds = pickle.load(f)
+
+    if not creds:
         return None
 
-    with open(token_path, "rb") as f:
-        creds = pickle.load(f)
-
     # Refresh if expired
-    if creds and creds.expired and creds.refresh_token:
+    if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, "wb") as f:
-            pickle.dump(creds, f)
+        try:
+            import streamlit as st
+            st.session_state["oauth_creds"] = creds
+        except (ImportError, RuntimeError):
+            pass
 
     if not creds or not creds.valid:
         return None
