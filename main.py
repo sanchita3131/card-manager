@@ -195,9 +195,11 @@ def _launch_streamlit():
         if is_oauth:
             st.success("Google account connected")
             if st.session_state.sheet_id:
-                st.info(f"📊 Sheet ready")
-            if st.button("New Sheet"):
-                _create_new_sheet(st)
+                sheet_url = f"https://docs.google.com/spreadsheets/d/{st.session_state.sheet_id}/edit"
+                st.markdown(f"📊 **[Open Sheet]({sheet_url})**")
+            else:
+                if st.button("Create New Sheet", type="primary"):
+                    _create_new_sheet(st)
             if st.button("Disconnect"):
                 clear_oauth_token()
                 st.session_state.oauth_authd = False
@@ -366,17 +368,16 @@ def _handle_oauth_callback(st):
         save_oauth_token(flow.credentials)
 
         # Auto-create the sheet on first sign-in
-        import gspread
-        from sheets_writer import save_sheet_id, initialize_sheet
+        from sheets_writer import save_sheet_id
         try:
             client = get_oauth_client()
             if client:
                 sheet = client.create("Card Manager - Business Cards")
                 st.session_state.sheet_id = sheet.id
                 save_sheet_id(sheet.id)
-                initialize_sheet(oauth=True, oauth_sheet_id=sheet.id)
         except Exception as e:
-            pass  # Not critical — user can create a sheet manually
+            import logging
+            logging.getLogger("card_manager").warning(f"Sheet auto-create failed (will retry on first save): {e}")
 
         st.session_state.oauth_authd = True
         st.session_state.auth_method = "oauth"
@@ -434,7 +435,7 @@ def _render_oauth(st):
 
 
 def _create_new_sheet(st):
-    from sheets_writer import get_oauth_client, initialize_sheet
+    from sheets_writer import get_oauth_client, save_sheet_id
 
     client = get_oauth_client()
     if not client:
@@ -444,11 +445,10 @@ def _create_new_sheet(st):
         sheet = client.create("Card Manager - Business Cards")
         st.session_state.sheet_id = sheet.id
         save_sheet_id(sheet.id)
-        initialize_sheet(oauth=True, oauth_sheet_id=sheet.id)
         st.success("New sheet created!")
         st.rerun()
-    except:
-        st.error("Failed to create sheet.")
+    except Exception as e:
+        st.error(f"Failed to create sheet: {e}")
 
 
 if __name__ == "__main__":
