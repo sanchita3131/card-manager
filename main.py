@@ -276,7 +276,7 @@ def _get_oauth_flow(redirect_uri: str | None = None):
     Create a Google OAuth Flow object.
 
     Works both locally (reads oauth_client_secret.json from disk)
-    and on Streamlit Cloud (reads GOOGLE_OAUTH_CLIENT_CONFIG secret/env var).
+    and on Streamlit Cloud (reads individual secret fields).
     """
     from google_auth_oauthlib.flow import Flow
     import json, os
@@ -285,7 +285,35 @@ def _get_oauth_flow(redirect_uri: str | None = None):
     if redirect_uri is None:
         redirect_uri = OAUTH_REDIRECT_URI
 
-    # Option 1: OAuth config from env var / Streamlit secret (Streamlit Cloud)
+    # Option 1: Individual OAuth fields from Streamlit secrets / env vars
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        try:
+            import streamlit as st
+            client_id = client_id or st.secrets.get("GOOGLE_CLIENT_ID")
+            client_secret = client_secret or st.secrets.get("GOOGLE_CLIENT_SECRET")
+        except (ImportError, RuntimeError):
+            pass
+
+    if client_id and client_secret:
+        client_config = {
+            "web": {
+                "client_id": client_id,
+                "project_id": os.environ.get("GOOGLE_PROJECT_ID", "card-manager-project-123"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_secret": client_secret,
+            }
+        }
+        return Flow.from_client_config(
+            client_config,
+            scopes=GOOGLE_OAUTH_SCOPES,
+            redirect_uri=redirect_uri,
+        )
+
+    # Option 2: Full OAuth config JSON (legacy)
     client_config_json = os.environ.get("GOOGLE_OAUTH_CLIENT_CONFIG")
     if not client_config_json:
         try:
@@ -302,7 +330,7 @@ def _get_oauth_flow(redirect_uri: str | None = None):
             redirect_uri=redirect_uri,
         )
 
-    # Option 2: Local file (development)
+    # Option 3: Local file (development)
     secret_path = Path(__file__).parent / GOOGLE_OAUTH_CLIENT_SECRET
     if secret_path.exists():
         return Flow.from_client_secrets_file(
@@ -353,17 +381,23 @@ def _render_oauth(st):
     import json, os
     from pathlib import Path
 
-    # Validate we have OAuth config somewhere (file or env var)
+    # Validate we have OAuth config somewhere (file, env var, or individual fields)
     secret_path = Path(__file__).parent / "oauth_client_secret.json"
-    has_file = secret_path.exists()
-    has_env = bool(os.environ.get("GOOGLE_OAUTH_CLIENT_CONFIG"))
-    if not has_env:
+    has_config = secret_path.exists()
+
+    # Check for OAuth config in env vars or Streamlit secrets
+    for check_key in ("GOOGLE_OAUTH_CLIENT_CONFIG", "GOOGLE_CLIENT_ID"):
+        if os.environ.get(check_key):
+            has_config = True
+            break
         try:
-            has_env = bool(st.secrets.get("GOOGLE_OAUTH_CLIENT_CONFIG"))
+            if st.secrets.get(check_key):
+                has_config = True
+                break
         except (ImportError, RuntimeError):
             pass
 
-    if not has_file and not has_env:
+    if not has_config:
         st.error("OAuth config missing. Set GOOGLE_OAUTH_CLIENT_CONFIG or add oauth_client_secret.json")
         st.session_state.oauth_active = False
         return
@@ -408,4 +442,14 @@ def _create_new_sheet(st):
 
 
 if __name__ == "__main__":
-    cli_main()
+    # Auto-launch Streamlit UI when running under `streamlit run` (Streamlit Cloud)
+    try:
+        import streamlit.runtime.scriptrunner as _sr
+        _is_streamlit = _sr.get_script_run_ctx() is not None
+    except Exception:
+        _is_streamlit = False
+
+    if _is_streamlit:
+        _launch_streamlit()
+    else:
+        cli_main()
