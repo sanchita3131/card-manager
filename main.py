@@ -416,9 +416,7 @@ def _render_oauth(st):
 
     flow = _get_oauth_flow()
     auth_url, _ = flow.authorization_url(
-        access_type="offline",       # get a refresh token so you're not asked again
-        include_granted_scopes=True, # don't re-ask for already-granted scopes
-        prompt="auto",                # "auto" = skip prompt if consent already stored
+        access_type="offline",  # get a refresh token so Google remembers you
     )
 
     os.makedirs(os.path.dirname(state_path), exist_ok=True)
