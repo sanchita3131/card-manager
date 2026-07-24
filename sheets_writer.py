@@ -7,6 +7,7 @@ Google Sheets integration — supports two auth modes:
 import logging
 import os
 import pickle
+import json
 from typing import Dict, Optional, List
 from datetime import datetime
 
@@ -81,11 +82,38 @@ def save_oauth_token(creds):
 
 
 def clear_oauth_token():
-    """Remove stored OAuth token (sign out)."""
+    """Remove stored OAuth token and saved sheet ID (sign out)."""
     token_path = os.path.expanduser("~/.claude/card-manager-oauth-token.pickle")
     if os.path.exists(token_path):
         os.remove(token_path)
         logger.info("OAuth token cleared.")
+    sheet_path = os.path.expanduser("~/.claude/card-manager-sheet-id.json")
+    if os.path.exists(sheet_path):
+        os.remove(sheet_path)
+        logger.info("Saved sheet ID cleared.")
+
+
+# ─── Sheet ID Persistence (auto-created sheet) ─────────────────────────────
+
+
+def save_sheet_id(sheet_id: str):
+    """Remember the auto-created sheet ID for next time."""
+    path = os.path.expanduser("~/.claude")
+    os.makedirs(path, exist_ok=True)
+    sheet_path = os.path.join(path, "card-manager-sheet-id.json")
+    with open(sheet_path, "w") as f:
+        json.dump({"sheet_id": sheet_id}, f)
+    logger.info("Sheet ID saved.")
+
+
+def get_saved_sheet_id() -> Optional[str]:
+    """Load the previously saved sheet ID, if any."""
+    sheet_path = os.path.expanduser("~/.claude/card-manager-sheet-id.json")
+    try:
+        with open(sheet_path) as f:
+            return json.load(f)["sheet_id"]
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        return None
 
 
 # ─── Sheet Operations ────────────────────────────────────────────────────

@@ -135,6 +135,7 @@ def _launch_streamlit():
     from sheets_writer import (
         initialize_sheet, append_card, get_all_cards,
         get_oauth_client, save_oauth_token, clear_oauth_token,
+        save_sheet_id, get_saved_sheet_id,
     )
     from config import (
         GOOGLE_CREDENTIALS_PATH, GOOGLE_SHEET_ID,
@@ -151,6 +152,10 @@ def _launch_streamlit():
     if GOOGLE_OAUTH_ENABLED and get_oauth_client() and not st.session_state.oauth_authd:
         st.session_state.oauth_authd = True
         st.session_state.auth_method = "oauth"
+        # Auto-load the saved sheet ID if one exists
+        saved_id = get_saved_sheet_id()
+        if saved_id:
+            st.session_state.sheet_id = saved_id
 
     # Handle OAuth callback
     if GOOGLE_OAUTH_ENABLED and not st.session_state.oauth_authd and st.query_params.get("code"):
@@ -188,24 +193,16 @@ def _launch_streamlit():
         st.header("Card Manager")
         if is_oauth:
             st.success("Google account connected")
+            if st.session_state.sheet_id:
+                st.info(f"📊 Sheet ready")
+            if st.button("New Sheet"):
+                _create_new_sheet(st)
             if st.button("Disconnect"):
                 clear_oauth_token()
                 st.session_state.oauth_authd = False
                 st.session_state.sheet_id = None
                 st.session_state.oauth_active = False
                 st.rerun()
-
-        st.subheader("Google Sheet")
-        si = st.text_input("Sheet ID or URL", placeholder="Paste your sheet ID or URL", key="si")
-        if si:
-            m = re.search(r"/d/([a-zA-Z0-9_-]+)", si)
-            st.session_state.sheet_id = m.group(1) if m else si
-        if st.session_state.sheet_id:
-            st.success("Sheet ready")
-        else:
-            st.warning("No sheet set")
-        if is_oauth and st.button("Create New Sheet"):
-            _create_new_sheet(st)
 
     st.subheader("Scan a Card")
     st.write("Upload a business card photo.")
@@ -323,7 +320,7 @@ def _get_oauth_flow(redirect_uri: str | None = None):
             pass
 
     if client_config_json:
-        client_config = json.loads(client_config_json)
+        client_config = json.loads(client_config_json.strip())
         return Flow.from_client_config(
             client_config,
             scopes=GOOGLE_OAUTH_SCOPES,
@@ -366,6 +363,19 @@ def _handle_oauth_callback(st):
 
         flow.fetch_token(code=st.query_params.get("code"))
         save_oauth_token(flow.credentials)
+
+        # Auto-create the sheet on first sign-in
+        import gspread
+        from sheets_writer import save_sheet_id, initialize_sheet
+        try:
+            client = get_oauth_client()
+            if client:
+                sheet = client.create("Card Manager - Business Cards")
+                st.session_state.sheet_id = sheet.id
+                save_sheet_id(sheet.id)
+                initialize_sheet(oauth=True, oauth_sheet_id=sheet.id)
+        except Exception as e:
+            pass  # Not critical — user can create a sheet manually
 
         st.session_state.oauth_authd = True
         st.session_state.auth_method = "oauth"
@@ -434,6 +444,7 @@ def _create_new_sheet(st):
     try:
         sheet = client.create("Card Manager - Business Cards")
         st.session_state.sheet_id = sheet.id
+        save_sheet_id(sheet.id)
         initialize_sheet(oauth=True, oauth_sheet_id=sheet.id)
         st.success("New sheet created!")
         st.rerun()
