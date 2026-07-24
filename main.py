@@ -17,6 +17,8 @@ from config import (
     GOOGLE_SHEET_ID,
     GOOGLE_OAUTH_ENABLED,
     GOOGLE_OAUTH_SCOPES,
+    OAUTH_REDIRECT_URI,
+    GOOGLE_OAUTH_CLIENT_SECRET,
     LLM_API_KEY,
     LLM_MODEL,
     LLM_BASE_URL,
@@ -269,14 +271,57 @@ def _launch_streamlit():
             st.dataframe(pd.DataFrame(recs).tail(10), use_container_width=True, hide_index=True)
 
 
-def _handle_oauth_callback(st):
-    from google_auth_oauthlib.flow import Flow
-    from sheets_writer import save_oauth_token
-    from pathlib import Path
-    import json, os
-    from config import GOOGLE_OAUTH_SCOPES
+def _get_oauth_flow(redirect_uri: str | None = None):
+    """
+    Create a Google OAuth Flow object.
 
-    secret_path = Path(__file__).parent / "oauth_client_secret.json"
+    Works both locally (reads oauth_client_secret.json from disk)
+    and on Streamlit Cloud (reads GOOGLE_OAUTH_CLIENT_CONFIG secret/env var).
+    """
+    from google_auth_oauthlib.flow import Flow
+    import json, os
+    from pathlib import Path
+
+    if redirect_uri is None:
+        redirect_uri = OAUTH_REDIRECT_URI
+
+    # Option 1: OAuth config from env var / Streamlit secret (Streamlit Cloud)
+    client_config_json = os.environ.get("GOOGLE_OAUTH_CLIENT_CONFIG")
+    if not client_config_json:
+        try:
+            import streamlit as st
+            client_config_json = st.secrets.get("GOOGLE_OAUTH_CLIENT_CONFIG")
+        except (ImportError, RuntimeError):
+            pass
+
+    if client_config_json:
+        client_config = json.loads(client_config_json)
+        return Flow.from_client_config(
+            client_config,
+            scopes=GOOGLE_OAUTH_SCOPES,
+            redirect_uri=redirect_uri,
+        )
+
+    # Option 2: Local file (development)
+    secret_path = Path(__file__).parent / GOOGLE_OAUTH_CLIENT_SECRET
+    if secret_path.exists():
+        return Flow.from_client_secrets_file(
+            str(secret_path),
+            scopes=GOOGLE_OAUTH_SCOPES,
+            redirect_uri=redirect_uri,
+        )
+
+    raise FileNotFoundError(
+        "No OAuth client config found. "
+        "Set the GOOGLE_OAUTH_CLIENT_CONFIG env var/secret, "
+        "or place oauth_client_secret.json in the project root."
+    )
+
+
+def _handle_oauth_callback(st):
+    import json, os
+    from sheets_writer import save_oauth_token
+
     state_path = os.path.expanduser("~/.claude/card-auth-state.json")
 
     if not os.path.exists(state_path):
@@ -288,9 +333,7 @@ def _handle_oauth_callback(st):
             saved = json.load(f)
         os.remove(state_path)
 
-        flow = Flow.from_client_secrets_file(
-            str(secret_path), scopes=GOOGLE_OAUTH_SCOPES,
-            redirect_uri="http://127.0.0.1:8501")
+        flow = _get_oauth_flow()
         flow.code_verifier = saved["cv"]
 
         flow.fetch_token(code=st.query_params.get("code"))
@@ -307,23 +350,32 @@ def _handle_oauth_callback(st):
 
 
 def _render_oauth(st):
-    from google_auth_oauthlib.flow import Flow
-    from pathlib import Path
     import json, os
-    from config import GOOGLE_OAUTH_SCOPES
+    from pathlib import Path
 
+    # Validate we have OAuth config somewhere (file or env var)
     secret_path = Path(__file__).parent / "oauth_client_secret.json"
-    if not secret_path.exists():
-        st.error("OAuth config missing.")
+    has_file = secret_path.exists()
+    has_env = bool(os.environ.get("GOOGLE_OAUTH_CLIENT_CONFIG"))
+    if not has_env:
+        try:
+            has_env = bool(st.secrets.get("GOOGLE_OAUTH_CLIENT_CONFIG"))
+        except (ImportError, RuntimeError):
+            pass
+
+    if not has_file and not has_env:
+        st.error("OAuth config missing. Set GOOGLE_OAUTH_CLIENT_CONFIG or add oauth_client_secret.json")
         st.session_state.oauth_active = False
         return
 
     state_path = os.path.expanduser("~/.claude/card-auth-state.json")
 
-    flow = Flow.from_client_secrets_file(
-        str(secret_path), scopes=GOOGLE_OAUTH_SCOPES,
-        redirect_uri="http://127.0.0.1:8501")
-    auth_url, _ = flow.authorization_url(prompt="consent")
+    flow = _get_oauth_flow()
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",       # get a refresh token so you're not asked again
+        include_granted_scopes=True, # don't re-ask for already-granted scopes
+        prompt="auto",                # "auto" = skip prompt if consent already stored
+    )
 
     os.makedirs(os.path.dirname(state_path), exist_ok=True)
     with open(state_path, "w") as f:

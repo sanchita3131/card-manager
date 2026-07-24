@@ -20,8 +20,8 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Streamlit
-*.streamlit/
+# Streamlit (keep dir, ignore secrets)
+.streamlit/secrets.toml
 
 # ORT model cache (auto-downloaded)
 .paddlex/

@@ -1,43 +1,67 @@
 """
 Configuration for Card Manager.
 
-Edit the values below to match your setup.
+Secrets are read in this priority order:
+  1. Streamlit secrets (st.secrets) — for Streamlit Cloud
+  2. Environment variables — for CLI or testing
+  3. .env file — local development
+  4. Hardcoded defaults below — last resort
 """
 
-# ─── Google Sheets ───────────────────────────────────────────────────────────
-# 1. Go to https://console.cloud.google.com/
-# 2. Create a project → Enable "Google Sheets API"
-# 3. Go to "Credentials" → "Create Credentials" → "Service Account"
-# 4. Download the JSON key file and save it somewhere safe
-# 5. Share your Google Sheet with the service account email (from the JSON key)
-# 6. Put the path to the JSON key below and the Sheet ID from your sheet URL
+import os
+from pathlib import Path
 
+# ── Load .env file if it exists (lightweight, no dependency) ────────────
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
+
+try:
+    import streamlit as st
+    _HAS_STREAMLIT = True
+except ImportError:
+    _HAS_STREAMLIT = False
+
+
+def _get(key: str, default: str = "") -> str:
+    """Read a config value: Streamlit secrets > env var > .env > default."""
+    if _HAS_STREAMLIT:
+        try:
+            if key in st.secrets:
+                return st.secrets[key]
+        except RuntimeError:
+            pass  # not running in a Streamlit context
+    return os.environ.get(key, default)
+
+
+# ─── Google Sheets ───────────────────────────────────────────────────────────
 GOOGLE_CREDENTIALS_PATH = "credentials.json"
-GOOGLE_SHEET_ID = "1IA8IpheEntBOsgHV67DZ4kC56B1Y9LOtN0P3IUWmk0c"
+GOOGLE_SHEET_ID = _get("GOOGLE_SHEET_ID", "1IA8IpheEntBOsgHV67DZ4kC56B1Y9LOtN0P3IUWmk0c")
 
 # ─── LLM (Vision) Settings ────────────────────────────────────────────────────
-# Sends the card image directly to a vision LLM (no OCR needed).
 LLM_ENABLED = True
 LLM_PROVIDER = "openrouter"
 LLM_BASE_URL = "https://openrouter.ai/api/v1"
 LLM_MODEL = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 # LLM_MODEL = "openai/gpt-4o-mini"  # Faster, ~$0.0001/card
-LLM_API_KEY = ""  # ← Paste your OpenRouter API key here
+LLM_API_KEY = _get("LLM_API_KEY", "")
 
 # ─── Google Account ───────────────────────────────────────────────────────────
-# The Google account that OWNS the sheet (for sharing info)
 GOOGLE_ACCOUNT_EMAIL = "sanchitawork31@gmail.com"
 
 # ─── Google OAuth (for user sign-in) ──────────────────────────────────────────
-# Set this to True to use OAuth (user signs in with Google) instead of service account
-# For OAuth: Go to Google Cloud Console → APIs & Services → Credentials
-#   → Create OAuth client ID → "Web application" or "Desktop app"
-#   → Set redirect URI to http://localhost:8501 for local testing
-#   → Download JSON and save as "oauth_client_secret.json"
 GOOGLE_OAUTH_ENABLED = True
 GOOGLE_OAUTH_CLIENT_SECRET = "oauth_client_secret.json"
-# Scopes the app requests
 GOOGLE_OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.file",
 ]
+
+# Redirect URI — override for Streamlit Cloud (set via secrets or env var)
+OAUTH_REDIRECT_URI = _get("OAUTH_REDIRECT_URI", "http://127.0.0.1:8501")

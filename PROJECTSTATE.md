@@ -4,122 +4,167 @@
 2026-07-24
 
 ## One-line Summary
-Business card OCR/vision → Google Sheets with OAuth sign-in. Currently switched to vision LLM (OpenRouter, no OCR). Google Sheets via user's own account (OAuth) or service account.
+Business card → vision LLM → Google Sheets. User signs in with Google OAuth, picks a sheet, uploads a card photo, and the vision LLM extracts name/company/position/phone/email directly. No OCR, no setup for users.
 
 ---
 
 ## Architecture (Current)
 
 ```
-Card Image → Vision LLM (OpenRouter) → JSON fields → Google Sheets
-                ↑                            ↑
-          Nemotron Omni (free)          OAuth (user signs in)
-          or gpt-4o-mini ($)            or service account
+Card Image → base64 → OpenRouter Vision LLM → JSON → Google Sheets (OAuth)
+                         ↑
+              Nemotron Omni (free) or gpt-4o-mini ($)
 ```
 
-## Current Pipeline
+No PaddleOCR. No ONNX Runtime. No scoring heuristics. No regex. The model reads the image directly.
 
-### 1. Vision LLM (no OCR)
-- **PaddleOCR/ONNX Runtime REMOVED** — no longer used.
-- Image is base64-encoded and sent directly to OpenRouter vision model.
-- Model sees the image and returns JSON: name, company, position, phone, email.
-- Configured in `config.py`: `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`.
-- Current model: `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` (free tier, ~7s latency).
-- Alternative (faster): `openai/gpt-4o-mini` (~$0.0001/card, ~1s latency).
+## Pipeline
 
-### 2. Google Sheets (two auth modes)
-- **OAuth** (default): User signs in with Google → picks their sheet → data saved. Set `GOOGLE_OAUTH_ENABLED = True`.
-- **Service account**: Uses `credentials.json` and fixed sheet ID. Used when OAuth is disabled.
+### 1. Vision LLM (`info_extractor.py`)
+- Image is base64-encoded and sent to OpenRouter via OpenAI-compatible SDK.
+- Prompt tells it to return JSON: name, company, position, phone, email.
+- `response_format={"type": "json_object"}` forces structured output.
+- No OCR, no preprocessing, no heuristics.
+- **Current model**: `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` (free, ~7s latency)
+- **Alternative**: `openai/gpt-4o-mini` (~$0.003/card, ~1s latency, reliable)
 
-### 3. Sheet Columns (no Timestamp)
+### 2. Google Sheets (`sheets_writer.py`)
+Two auth modes:
+- **OAuth** (primary): User signs in with Google → app gets access to their Drive. Can create new sheets or use existing ones.
+- **Service account** (fallback): Uses `credentials.json` and a fixed sheet ID.
+
+Columns (no Timestamp):
 | Card Holder Name | Company Name | Position | Phone Number | Email Address |
 |---|---|---|---|---|
 
----
+Headers are auto-created by `initialize_sheet()` before every save.
+
+### 3. Streamlit UI (`main.py`)
+Pages:
+- **Landing**: Title + 3 step cards + "Continue with Google" button
+- **OAuth flow**: Link to Google → user authorizes → redirects back → token saved
+- **Main app**: Sidebar (account status, sheet ID input, create sheet button) + upload area + extract button + results + recent entries
+
+OAuth callback flow:
+1. User clicks "Open Google Sign-in" → auth URL generated (PKCE enabled)
+2. `flow.code_verifier` saved to `~/.claude/card-auth-state.json`
+3. Google redirects to `http://127.0.0.1:8501/?code=...`
+4. New Streamlit session detects `?code=` → reads saved verifier → exchanges code
+5. Token saved to `~/.claude/card-manager-oauth-token.pickle`
+6. Session marked authenticated → reruns as main app
+
+## OAuth Setup (Google Cloud Console)
+1. Project: `card-manager-project-123`
+2. OAuth consent screen: External, app name "Card Manager"
+3. OAuth client: **Web application** type, name "Card Manager"
+4. **Authorized redirect URIs**: `http://127.0.0.1:8501`
+5. Test user: `sanchitawork31@gmail.com`
+6. Client secret saved as `oauth_client_secret.json` in project root
+7. Env: `GOOGLE_OAUTH_ENABLED = True` in config.py
 
 ## Files
 
-| File | Purpose |
-|------|---------|
-| `main.py` | Entry point — Streamlit UI (no CLI mode used currently) |
-| `config.py` | LLM settings, OAuth config, sheet ID |
-| `info_extractor.py` | Vision LLM extraction — sends image to OpenRouter |
-| `sheets_writer.py` | Google Sheets API (service account + OAuth) |
-| `ocr_engine.py` | ❌ NOT USED (kept for reference) |
-| `image_processor.py` | ❌ NOT USED (kept for reference) |
-| `excel_writer.py` | ❌ NOT USED (Excel export was removed) |
-| `setup_google_sheets.py` | Setup helper |
-| `oauth_client_secret.json` | Google OAuth client credentials (Web app type) |
-| `credentials.json` | Service account key |
+| File | Status | Purpose |
+|------|--------|---------|
+| `main.py` | ✅ Active | Streamlit UI, OAuth flow, entry point |
+| `config.py` | ✅ Active | API keys, OAuth settings, model config |
+| `info_extractor.py` | ✅ Active | Vision LLM — sends image to OpenRouter |
+| `sheets_writer.py` | ✅ Active | Google Sheets API (OAuth + service account) |
+| `oc r_engine.py` | ❌ Dead | PaddleOCR wrapper — not imported anywhere |
+| `image_processor.py` | ❌ Dead | No-op passthrough — not imported anywhere |
+| `excel_writer.py` | ❌ Dead | Excel export — replaced by Google Sheets |
+| `setup_google_sheets.py` | 🟡 Legacy | Interactive setup guide for service account |
+| `oauth_client_secret.json` | ⚠️ Secret | Google OAuth credentials (gitignored) |
+| `credentials.json` | ⚠️ Secret | Service account key (gitignored) |
+| `error.md` | 🟡 Doc | Error analysis from session |
+| `workflow.html` | 🟡 Doc | Visual workflow explainer |
 
----
+## Dependencies (`requirements.txt`)
+```
+opencv-python       # NOT USED (kept for reference)
+numpy               # NOT USED
+paddleocr           # NOT USED
+onnxruntime         # NOT USED
+google-auth         # Service account auth
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib   # OAuth flow
+gspread              # Google Sheets API
+openai               # OpenRouter SDK (vision LLM)
+streamlit            # Web UI
+Pillow              # Image handling
+```
 
-## Session History (2026-07-23 to 2026-07-24)
+## Session History (2026-07-23 — 2026-07-24)
 
-### Original State
-- Project used PaddleOCR v5 + ONNX Runtime for text recognition.
-- Scoring-based extraction (heuristics + regex) for all fields.
-- Google Sheets via service account.
-- Tested 5/5 on synthetic cards. Failed on real card2.jpeg (all-caps name put as company, address put as name).
+### Phase 1: Original (Scoring + PaddleOCR)
+- PaddleOCR v5 via ONNX Runtime for text detection
+- Scoring-based extractor: each line scored for name/company/position
+- Regex for phone/email
+- Google Sheets via service account
+- Tested 5/5 on synthetic cards; failed on real card2 (all-caps name, address lines)
 
-### Changes Made
+### Phase 2: LLM added (text-based)
+- Added `extract_with_llm()` sending OCR text to OpenRouter
+- Scoring kept as fallback
+- Free Nemotron model was unreliable — swapped name/address/company
 
-#### LLM Integration (Round 1)
-- Added `extract_with_llm()` in info_extractor.py — sends OCR text to OpenRouter for name/position/company extraction.
-- Kept regex for phone/email.
-- Used `openai` SDK with OpenRouter base URL.
-- Model: `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`.
-- **Issue**: The free Nemotron model was unreliable — confused addresses with names, swapped fields.
+### Phase 3: Scoring fixes attempted
+- Added address detection, all-caps name boost, entity priority reorder, email-domain fallback
+- User rejected as "card-specific" — all reverted
 
-#### Scoring Fixes (tried, then reverted)
-- Tried adding `_is_address_line()` to reject address patterns.
-- Tried changing entity assignment priority (name before company).
-- Tried ALL-CAPS name scoring adjustments.
-- Tried email-domain company fallback.
-- **All reverted** — user said "don't work card specific."
+### Phase 4: Excel export
+- Created `excel_writer.py` — no Google Cloud setup needed
+- Streamlit UI switched to download-based Excel
+- Race condition with download button (fix: always enable)
+- User reverted — wanted Google Sheets
 
-#### Google Sheets → Excel → Google Sheets
-- Moved to Excel writer (`excel_writer.py`) — no Google Cloud setup needed.
-- **Issue**: Excel download button wasn't updating after extraction (race condition).
-- Reverted back to Google Sheets with OAuth support.
+### Phase 5: OAuth sign-in (long struggle)
+- **Attempt 1**: Desktop app client + `urn:ietf:wg:oauth:2.0:oob` → Google deprecated OOB, error 400
+- **Attempt 2**: `run_local_server()` → blocked Streamlit thread
+- **Attempt 3**: Desktop app + `http://localhost` → still error 400
+- **Attempt 4**: Web application client + `http://localhost:8501` → `redirect_uri_mismatch`
+- **Attempt 5**: Added redirect URI in GC Console → still mismatch (used `127.0.0.1:8501` vs `localhost:8501`)
+- **Attempt 6**: Web app + `http://127.0.0.1:8501` → PKCE code verifier lost on redirect
+- **Attempt 7**: Save `flow.code_verifier` to disk → callback restores it → exchange succeeds
+- **Issue**: Streamlit session lost on redirect (new session, no auth state)
 
-#### OAuth Flow (long struggle)
-- Initially used Desktop app OAuth client with `urn:ietf:wg:oauth:2.0:oob` redirect.
-- Google deprecated OOB flow — got `error 400: invalid_request`.
-- Switched to Web application client with `http://localhost:8501` redirect.
-- Got `redirect_uri_mismatch` — URI wasn't authorized.
-- Added redirect URI in Google Cloud Console → still mismatch.
-- Discovered PKCE code verifier was being auto-generated but lost on redirect.
-- Fixed: save `flow.code_verifier` to disk before redirect, restore on callback.
-- **Current OAuth flow**: 
-  - User clicks "Continue with Google"
-  - Auth URL with PKCE generated → saved to `~/.claude/card-auth-state.json`
-  - User authorizes → Google redirects to `http://127.0.0.1:8501/?code=...`
-  - New Streamlit session detects code in URL → reads saved verifier → exchanges code
-  - Token saved to `~/.claude/card-manager-oauth-token.pickle`
-- **Last known issue**: OAuth sign-in redirects but app still shows sign-in page (session state lost on redirect).
+### Phase 6: Vision LLM (no OCR)
+- Removed PaddleOCR entirely
+- `info_extractor.py` rewritten: sends image directly to vision model
+- Headers simplified: removed Timestamp
+- Sheet columns: Name, Company, Position, Phone, Email
 
-#### Vision LLM (no OCR)
-- Removed PaddleOCR entirely.
-- `info_extractor.py` rewritten — sends image directly to vision model.
-- No OCR engine, no ONNX Runtime, no model downloads.
-- Headers in sheets simplified: removed Timestamp column.
-- New sheets auto-create with headers: Name, Company, Position, Phone, Email.
+### Phase 7: Final fixes
+- Fixed API key trailing space
+- Added `initialize_sheet()` before every save (headers auto-created)
+- Pushed to GitHub
 
-### Known Issues
-1. **Vision LLM needs API key** — paste `LLM_API_KEY` in `config.py`.
-2. **OAuth sign-in flow** — code verifier is saved/restored but Streamlit session state is lost on redirect (new session is created when Google redirects back).
-3. **Web app OAuth client** needs `http://127.0.0.1:8501` as authorized redirect URI in Google Cloud Console.
-4. **Free Nemotron model** is slow (~7s per request) and may be unreliable. Switch to `openai/gpt-4o-mini` for production.
+## Recent Changes
 
-### Cost
-| Component | Cost |
-|-----------|------|
-| Vision LLM (Nemotron free) | **$0.00** |
-| Vision LLM (gpt-4o-mini) | ~$0.003/card |
-| Google Sheets API | **$0.00** |
+### 2026-07-24 — Fixed OAuth "asks every time" issue
+- Removed `prompt="consent"` from `flow.authorization_url()` — was forcing Google to re-ask for permission on every sign-in
+- Replaced with `access_type="offline"`, `include_granted_scopes=True`, `prompt="auto"`
+- Now Google remembers consent: user only sees the approval screen once, subsequent sign-ins are silent
 
-### To Make the App Work Now
-1. Set `LLM_API_KEY` in `config.py` to your OpenRouter API key.
-2. Ensure `http://127.0.0.1:8501` is in authorized redirect URIs for the Web application OAuth client in Google Cloud Console.
-3. Run: `python -m streamlit run main.py -- --ui`
+## Known Issues
+
+1. **OAuth session lost on redirect** — Google redirects back with `?code=...`, which creates a new Streamlit session without auth state. The `_handle_oauth_callback` function detects the code from URL params and exchanges it, but the flow depends on `~/.claude/card-auth-state.json` being written before the redirect.
+
+2. **Free Nemotron model is slow** (~7s/card). Switch to `openai/gpt-4o-mini` for production.
+
+3. **API key in config.py** — Must be pasted manually after every `git pull` (file is tracked, key is removed before commits).
+
+4. **OAuth client redirect URI** — `http://127.0.0.1:8501` must be in authorized URIs in Google Cloud Console for the Web app client. For production deployment, update to the deployed URL.
+
+## GitHub
+- Repo: `https://github.com/sanchita3131/card-manager`
+- `.gitignore` excludes: `credentials.json`, `oauth_client_secret.json`, `venv/`, `__pycache__/`
+- API key removed before commits (GitHub push protection blocks secrets)
+
+## Running
+```bash
+cd /Users/sanchitapathak/Claude_Code/Projects/card_manager
+source venv/bin/activate
+python -m streamlit run main.py -- --ui
+```
