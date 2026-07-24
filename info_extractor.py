@@ -28,10 +28,10 @@ def extract_info_from_image(
         base_url: OpenRouter base URL
 
     Returns:
-        Dict with keys: name, company, position, phone, email
+        Dict with keys: name, company, position, phone, email, domain
     """
     default = {"name": "null", "company": "null", "position": "null",
-               "phone": "null", "email": "null"}
+               "phone": "null", "email": "null", "domain": "null"}
 
     if not api_key:
         logger.error("No API key configured for vision LLM.")
@@ -67,7 +67,13 @@ def extract_info_from_image(
                     "content": (
                         "You extract business card data from images. "
                         "Return ONLY valid JSON with these keys: "
-                        "name, company, position, phone, email. "
+                        "name, company, position, phone, email, domain. "
+                        "\"phone\": include ALL phone numbers found (mobile, office, fax) "
+                        "separated by comma. "
+                        "\"domain\": classify the company's industry into one of: "
+                        "IT Company, Automation, Research, Healthcare, Finance, Education, "
+                        "Consulting, Manufacturing, Real Estate, Legal, Media, "
+                        "Non-Profit, Government, Other. "
                         "Use null for any field you can't determine. "
                         "Never put addresses or website URLs in any field."
                     ),
@@ -80,7 +86,8 @@ def extract_info_from_image(
                             "text": (
                                 "Extract the business card details from this image. "
                                 "Return JSON: {\"name\": \"...\", \"company\": \"...\", "
-                                "\"position\": \"...\", \"phone\": \"...\", \"email\": \"...\"}"
+                                "\"position\": \"...\", \"phone\": \"...\", "
+                                "\"email\": \"...\", \"domain\": \"...\"}"
                             ),
                         },
                         {
@@ -113,6 +120,7 @@ def extract_info_from_image(
             "position": str(parsed.get("position") or "null"),
             "phone": str(parsed.get("phone") or "null"),
             "email": str(parsed.get("email") or "null"),
+            "domain": str(parsed.get("domain") or "null"),
         }
         logger.info(f"Vision LLM result: {result}")
         return result

@@ -58,6 +58,7 @@ def process_card(image_path: str) -> dict:
     logger.info(f"  │ Position : {card_info['position']:<40}│")
     logger.info(f"  │ Phone    : {card_info['phone']:<40}│")
     logger.info(f"  │ Email    : {card_info['email']:<40}│")
+    logger.info(f"  │ Domain   : {card_info.get('domain', 'null'):<40}│")
     logger.info(f"  └──────────────────────────────────────────────────────────┘")
 
     return card_info

@@ -59,8 +59,8 @@ GOOGLE_ACCOUNT_EMAIL = "sanchitawork31@gmail.com"
 GOOGLE_OAUTH_ENABLED = True
 GOOGLE_OAUTH_CLIENT_SECRET = "oauth_client_secret.json"
 GOOGLE_OAUTH_SCOPES = [
-    # drive.file is sufficient — no Google verification needed.
-    # The app creates its own sheet via OAuth, no need for blanket sheet access.
+    # Both needed: spreadsheets for API access, drive.file for creating sheets
+    "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.file",
 ]
 

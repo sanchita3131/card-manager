@@ -19,6 +19,7 @@ HEADERS = [
     "Position",
     "Phone Number",
     "Email Address",
+    "Domain",
 ]
 
 # ─── Service Account Auth ─────────────────────────────────────────────────
@@ -193,6 +194,7 @@ def append_card(credentials_path: str = None, sheet_id: str = None,
             card_data.get("position", "null"),
             card_data.get("phone", "null"),
             card_data.get("email", "null"),
+            card_data.get("domain", "null"),
         ]
 
         sheet.append_row(row, value_input_option="RAW")
