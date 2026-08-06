@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger("card_manager")
 
 
-def process_card(image_path: str) -> dict:
+def process_card(image_path: str, api_key: str = None) -> dict:
     """Send image to vision LLM and extract card fields."""
     path = Path(image_path)
     if not path.exists():
@@ -47,7 +47,7 @@ def process_card(image_path: str) -> dict:
 
     card_info = extract_info_from_image(
         image_path,
-        api_key=LLM_API_KEY,
+        api_key=api_key or LLM_API_KEY,
         model=LLM_MODEL,
         base_url=LLM_BASE_URL,
     )
@@ -136,11 +136,12 @@ def _launch_streamlit():
     from sheets_writer import (
         initialize_sheet, append_card, get_all_cards,
         get_oauth_client, save_oauth_token, clear_oauth_token,
-        save_sheet_id, get_saved_sheet_id,
+        save_sheet_id, get_saved_sheet_id, find_or_create_sheet,
+        save_llm_api_key, get_saved_llm_api_key, clear_llm_api_key,
     )
     from config import (
         GOOGLE_CREDENTIALS_PATH, GOOGLE_SHEET_ID,
-        GOOGLE_OAUTH_ENABLED,
+        GOOGLE_OAUTH_ENABLED, LLM_API_KEY as DEFAULT_LLM_API_KEY,
     )
 
     st.set_page_config(page_title="Card Manager", page_icon="💳", layout="centered")
@@ -153,10 +154,14 @@ def _launch_streamlit():
     if GOOGLE_OAUTH_ENABLED and get_oauth_client() and not st.session_state.oauth_authd:
         st.session_state.oauth_authd = True
         st.session_state.auth_method = "oauth"
-        # Auto-load the saved sheet ID if one exists
+        # Auto-load the saved sheet ID and LLM key if they exist, so a
+        # returning login never has to redo either.
         saved_id = get_saved_sheet_id()
         if saved_id:
             st.session_state.sheet_id = saved_id
+        saved_key = get_saved_llm_api_key()
+        if saved_key and "llm_api_key" not in st.session_state:
+            st.session_state.llm_api_key = saved_key
 
     # Handle OAuth callback
     if GOOGLE_OAUTH_ENABLED and not st.session_state.oauth_authd and st.query_params.get("code"):
@@ -194,15 +199,35 @@ def _launch_streamlit():
         st.header("Card Manager")
         if is_oauth:
             st.success("Google account connected")
+            if not st.session_state.sheet_id:
+                # No manual "create sheet" step — always reuse the one sheet
+                # tied to this account, creating it only if it's truly missing.
+                _ensure_sheet(st)
             if st.session_state.sheet_id:
                 sheet_url = f"https://docs.google.com/spreadsheets/d/{st.session_state.sheet_id}/edit"
                 st.markdown(f"📊 **[Open Sheet]({sheet_url})**")
+
+            st.divider()
+            st.caption("🔑 LLM API Key")
+            if st.session_state.get("llm_api_key") and not st.session_state.get("editing_llm_key"):
+                st.text(f"Saved: ••••{st.session_state.llm_api_key[-4:]}")
+                if st.button("Change key"):
+                    st.session_state.editing_llm_key = True
+                    st.rerun()
             else:
-                if st.button("Create New Sheet", type="primary"):
-                    _create_new_sheet(st)
+                key_input = st.text_input(
+                    "Your LLM API key (e.g. OpenRouter)", type="password", key="llm_key_input",
+                )
+                if st.button("Save key", type="primary") and key_input.strip():
+                    st.session_state.llm_api_key = key_input.strip()
+                    save_llm_api_key(key_input.strip())
+                    st.session_state.pop("editing_llm_key", None)
+                    st.rerun()
+
             if st.button("Disconnect"):
                 clear_oauth_token()
-                for _k in ("oauth_authd", "sheet_id", "oauth_active", "oauth_creds"):
+                clear_llm_api_key()
+                for _k in ("oauth_authd", "sheet_id", "oauth_active", "oauth_creds", "llm_api_key", "editing_llm_key"):
                     st.session_state.pop(_k, None)
                 st.rerun()
 
@@ -227,13 +252,14 @@ def _launch_streamlit():
                     bar = st.progress(0)
                     status = st.empty()
 
-                    if not LLM_API_KEY:
-                        st.error("No API key set. Add LLM_API_KEY in config.py.")
+                    effective_llm_key = st.session_state.get("llm_api_key") or DEFAULT_LLM_API_KEY
+                    if not effective_llm_key:
+                        st.error("No LLM API key set. Add one in the sidebar.")
                     else:
                         status.info("Analyzing card with vision AI...")
                         bar.progress(30)
 
-                        info = process_card(img_path)
+                        info = process_card(img_path, api_key=effective_llm_key)
 
                         bar.progress(60)
                         status.info("Setting up sheet headers...")
@@ -366,17 +392,21 @@ def _handle_oauth_callback(st):
         # Store in browser session only — never in a shared server file
         st.session_state["oauth_creds"] = flow.credentials
 
-        # Auto-create the sheet on first sign-in
-        from sheets_writer import save_sheet_id
+        # Find or create the user's sheet (one user = one sheet for life)
         try:
             client = get_oauth_client()
             if client:
-                sheet = client.create("Card Manager - Business Cards")
+                sheet = find_or_create_sheet(client)
                 st.session_state.sheet_id = sheet.id
-                save_sheet_id(sheet.id)
         except Exception as e:
             import logging
-            logging.getLogger("card_manager").warning(f"Sheet auto-create failed (will retry on first save): {e}")
+            logging.getLogger("card_manager").warning(f"Sheet setup failed (will retry on first save): {e}")
+
+        # Load a previously saved LLM key, if any, so it doesn't need re-entry
+        from sheets_writer import get_saved_llm_api_key
+        saved_key = get_saved_llm_api_key()
+        if saved_key:
+            st.session_state["llm_api_key"] = saved_key
 
         st.session_state.oauth_authd = True
         st.session_state.auth_method = "oauth"
@@ -433,21 +463,25 @@ def _render_oauth(st):
         st.rerun()
 
 
-def _create_new_sheet(st):
-    from sheets_writer import get_oauth_client, save_sheet_id
+def _ensure_sheet(st):
+    """
+    Load the account's one-and-only sheet into session state, creating it
+    only the very first time. Called silently — never exposed as a manual
+    "create new sheet" action, so returning users always land on the same
+    sheet their earlier cards were saved to.
+    """
+    from sheets_writer import get_oauth_client, find_or_create_sheet
 
     client = get_oauth_client()
     if not client:
         st.error("Not authenticated.")
         return
     try:
-        sheet = client.create("Card Manager - Business Cards")
+        sheet = find_or_create_sheet(client)
         st.session_state.sheet_id = sheet.id
-        save_sheet_id(sheet.id)
-        st.success("New sheet created!")
         st.rerun()
     except Exception as e:
-        st.error(f"Failed to create sheet: {e}")
+        st.error(f"Failed to set up sheet: {e}")
 
 
 if __name__ == "__main__":

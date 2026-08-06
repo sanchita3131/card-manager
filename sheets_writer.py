@@ -111,6 +111,37 @@ def clear_oauth_token():
         logger.info("Saved sheet ID cleared.")
 
 
+# ─── LLM API Key Persistence (one user → one key, remembered) ────────────
+
+
+def save_llm_api_key(api_key: str):
+    """Remember the user's own LLM API key so they never re-enter it."""
+    path = os.path.expanduser("~/.claude")
+    os.makedirs(path, exist_ok=True)
+    key_path = os.path.join(path, "card-manager-llm-key.json")
+    with open(key_path, "w") as f:
+        json.dump({"llm_api_key": api_key}, f)
+    logger.info("LLM API key saved.")
+
+
+def get_saved_llm_api_key() -> Optional[str]:
+    """Load the previously saved LLM API key, if any."""
+    key_path = os.path.expanduser("~/.claude/card-manager-llm-key.json")
+    try:
+        with open(key_path) as f:
+            return json.load(f)["llm_api_key"]
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        return None
+
+
+def clear_llm_api_key():
+    """Remove the stored LLM API key (sign out)."""
+    key_path = os.path.expanduser("~/.claude/card-manager-llm-key.json")
+    if os.path.exists(key_path):
+        os.remove(key_path)
+        logger.info("Saved LLM API key cleared.")
+
+
 # ─── Sheet ID Persistence (auto-created sheet) ─────────────────────────────
 
 
@@ -132,6 +163,46 @@ def get_saved_sheet_id() -> Optional[str]:
             return json.load(f)["sheet_id"]
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         return None
+
+
+# ─── Sheet Discovery (one user → one sheet for life) ────────────────────
+
+
+def find_or_create_sheet(client, sheet_title: str = "Card Manager - Business Cards"):
+    """
+    Find the user's existing sheet or create one. Never creates duplicates.
+
+    Priority:
+      1. Saved sheet ID (local cache) — verify it still exists
+      2. Search all accessible sheets for matching title
+      3. Create a new sheet only if nothing is found
+    """
+    # Step 1: Check saved sheet ID
+    saved_id = get_saved_sheet_id()
+    if saved_id:
+        try:
+            sheet = client.open_by_key(saved_id)
+            logger.info(f"Reusing saved sheet: {saved_id}")
+            return sheet
+        except Exception:
+            logger.info("Saved sheet not found or inaccessible, searching...")
+
+    # Step 2: Search all sheets the user can access
+    try:
+        all_sheets = client.openall()
+        for s in all_sheets:
+            if s.title == sheet_title:
+                save_sheet_id(s.id)
+                logger.info(f"Found existing sheet via search: {s.id}")
+                return s
+    except Exception as e:
+        logger.warning(f"Sheet search skipped: {e}")
+
+    # Step 3: Create a fresh one
+    sheet = client.create(sheet_title)
+    save_sheet_id(sheet.id)
+    logger.info(f"Created new sheet: {sheet.id}")
+    return sheet
 
 
 # ─── Sheet Operations ────────────────────────────────────────────────────
